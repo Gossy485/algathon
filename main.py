@@ -5,6 +5,8 @@ Vol-scaled cross-sectional mean-reversion
 • **Signal**      : gap to a 13-day simple moving average (SMA-13).
 • **Entry rule**  : every 5th trading day go long the 6 most oversold
   names (gap ≤ –1.8 %), short the 6 most over-bought (gap ≥ +1.8 %).
+• **Trend filter**: skip trades if price deviates from its 50-day SMA by
+  more than about 3 %. This guards against fading strong trends.
 • **Sizing**      : risk-parity – each leg is sized so that a 1 σ
   (20-day realised) move is worth ≈ 2 000 USD, but never more than
   9 900 USD (the competition’s \$10 k cap) and never fewer than 1 share.
@@ -29,6 +31,8 @@ _GAP_THRESH      = 0.018       # 1.8 % from SMA before we act
 _VOL_WIN         = 20          # σ horizon for risk sizing
 _SIGMA_RISK_USD  = 2_000.0     # \$ P&L budget at ±1 σ
 _LEG_CAP_USD     = 9_900.0     # ≤ \$10 000 per competition rules
+_WINDOW_TREND    = 50          # longer horizon for trend filter
+_TREND_THRESH    = 0.03        # ignore mean reversion if \u2265 3 % trend
 # ──────────────────────────────────────────────────────────────────────
 
 _last_reb_day: int | float = -10**9
@@ -62,21 +66,25 @@ def getMyPosition(prcSoFar) -> list[int]:
     if _pos is None:
         _pos = np.zeros(n_inst, dtype=int)
 
-    # need enough history for both SMA and σ
-    if n_days <= max(_WINDOW_SMA, _VOL_WIN):
+    # need enough history for both SMA, σ and trend filter
+    if n_days <= max(_WINDOW_SMA, _VOL_WIN, _WINDOW_TREND):
         return _pos.tolist()
 
     # honour the rebalance cadence
     if (today - _last_reb_day) < _REBAL_EVERY:
         return _pos.tolist()
 
-    # ── build the mean-reversion signal ───────────────────────────────
+    # ── build the mean-reversion signal with a trend filter ──────────
     sma  = prc[:, today - _WINDOW_SMA + 1 : today + 1].mean(axis=1)
     gap  = prc[:, today] / sma - 1.0
+    sma_trend = prc[:, today - _WINDOW_TREND + 1 : today + 1].mean(axis=1)
+    trend_gap = np.abs(prc[:, today] / sma_trend - 1.0)
 
     order   = np.argsort(gap)
-    longs   = [i for i in order[:_K_LONG_SHORT]  if gap[i] <= -_GAP_THRESH]
-    shorts  = [i for i in order[-_K_LONG_SHORT:] if gap[i] >=  _GAP_THRESH]
+    longs   = [i for i in order[:_K_LONG_SHORT]
+               if gap[i] <= -_GAP_THRESH and trend_gap[i] <= _TREND_THRESH]
+    shorts  = [i for i in order[-_K_LONG_SHORT:]
+               if gap[i] >= _GAP_THRESH and trend_gap[i] <= _TREND_THRESH]
 
     new_pos = np.zeros(n_inst, dtype=int)
 

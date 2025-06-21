@@ -4,33 +4,38 @@ import numpy as np
 import pandas as pd
 from main import getMyPosition as getPosition
 
-nInst = 0
-nt = 0
 commRate = 0.0005
 dlrPosLimit = 10000
 
 def loadPrices(fn):
-    global nt, nInst
-    df=pd.read_csv(fn, sep='\s+', header=None, index_col=None)
-    (nt,nInst) = df.shape
-    return (df.values).T
+    df = pd.read_csv(fn, sep='\s+', header=None, index_col=None)
+    return df.values.T
 
-pricesFile="prices.txt"
-prcAll = loadPrices(pricesFile)
-print ("Loaded %d instruments for %d days" % (nInst, nt))
+def main(num_days: int = 200, prices_file: str = "prices.txt", verbose: bool = True):
+    prcAll = loadPrices(prices_file)
+    nInst, nt = prcAll.shape
+    print(f"Loaded {nInst} instruments for {nt} days")
+    meanpl, ret, plstd, sharpe, dvol = calcPL(prcAll, num_days, verbose)
+    score = meanpl - 0.1 * plstd
+    print("=====")
+    print("mean(PL): %.1lf" % meanpl)
+    print("return: %.5lf" % ret)
+    print("StdDev(PL): %.2lf" % plstd)
+    print("annSharpe(PL): %.2lf " % sharpe)
+    print("totDvolume: %.0lf " % dvol)
+    print("Score: %.2lf" % score)
+    return score
 
-def calcPL(prcHist, numTestDays):
-    cash = 0
+def calcPL(prcHist, numTestDays, verbose=True):
+    cash = 0.0
+    nInst, nt = prcHist.shape
     curPos = np.zeros(nInst)
-    totDVolume = 0
-    totDVolumeSignal = 0
-    totDVolumeRandom = 0
-    value = 0
+    totDVolume = 0.0
+    value = 0.0
     todayPLL = []
-    (_,nt) = prcHist.shape
     startDay = nt + 1 - numTestDays
-    for t in range(startDay, nt+1):
-        prcHistSoFar = prcHist[:,:t]
+    for t in range(startDay, nt + 1):
+        prcHistSoFar = prcHist[:, :t]
         curPrices = prcHistSoFar[:,-1]
         if (t < nt):
             # Trading, do not do it on the very last day of the test
@@ -49,27 +54,20 @@ def calcPL(prcHist, numTestDays):
         posValue = curPos.dot(curPrices)
         todayPL = cash + posValue - value
         value = cash + posValue
-        ret = 0.0
-        if (totDVolume > 0):
-            ret = value / totDVolume
-        if (t > startDay):
-            print ("Day %d value: %.2lf todayPL: $%.2lf $-traded: %.0lf return: %.5lf" % (t,value, todayPL, totDVolume, ret))
+        ret = value / totDVolume if totDVolume > 0 else 0.0
+        if t > startDay:
+            if verbose:
+                print(
+                    "Day %d value: %.2lf todayPL: $%.2lf $-traded: %.0lf return: %.5lf"
+                    % (t, value, todayPL, totDVolume, ret)
+                )
             todayPLL.append(todayPL)
     pll = np.array(todayPLL)
-    (plmu,plstd) = (np.mean(pll), np.std(pll))
-    annSharpe = 0.0
-    if (plstd > 0):
-        annSharpe = np.sqrt(249) * plmu / plstd
-    return (plmu, ret, plstd, annSharpe, totDVolume)
+    plmu, plstd = np.mean(pll), np.std(pll)
+    annSharpe = np.sqrt(249) * plmu / plstd if plstd > 0 else 0.0
+    return plmu, ret, plstd, annSharpe, totDVolume
 
 
 
-(meanpl, ret, plstd, sharpe, dvol) = calcPL(prcAll,200)
-score = meanpl - 0.1*plstd
-print ("=====")
-print ("mean(PL): %.1lf" % meanpl)
-print ("return: %.5lf" % ret)
-print ("StdDev(PL): %.2lf" % plstd)
-print ("annSharpe(PL): %.2lf " % sharpe)
-print ("totDvolume: %.0lf " % dvol)
-print ("Score: %.2lf" % score)
+if __name__ == "__main__":
+    main()
