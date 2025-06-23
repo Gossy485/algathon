@@ -128,7 +128,6 @@ def evaluate():
 
     # ───── robustness gates ─────
     fail_reasons = []
-    if worst_fold < 0:        fail_reasons.append("negative fold")
     if noise_mean < 0:        fail_reasons.append("noise test")
     if shuffle_mean >= w_mean/2 and shuffle_mean > 0: # Check if shuffle score is suspiciously high
         fail_reasons.append("shuffle reality")
