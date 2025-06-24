@@ -1,10 +1,11 @@
 #!/usr/bin/env python
-"""Index momentum strategy with larger position size."""
+"""Index momentum with cross-sectional tilt."""
 import numpy as np
 
 LOOKBACK = 10
 THRESH = 0.002
-DOLLARS_PER_INST = 1500
+INDEX_DOLLARS = 800
+CS_DOLLARS = 400
 
 
 def getMyPosition(price_history: np.ndarray) -> list[int]:
@@ -21,6 +22,21 @@ def getMyPosition(price_history: np.ndarray) -> list[int]:
         return [0] * n_inst
 
     direction = 1 if mom > 0 else -1
+    inst_mom = prices[:, -1] / prices[:, -LOOKBACK - 1] - 1.0
+    ranks = np.argsort(inst_mom)
+    longs = ranks[-10:]
+    shorts = ranks[:10]
+
     price_today = prices[:, -1]
-    shares = np.floor(DOLLARS_PER_INST / price_today).astype(int)
-    return (direction * shares).tolist()
+    base = np.floor(INDEX_DOLLARS / price_today).astype(int)
+    tilt = np.floor(CS_DOLLARS / price_today).astype(int)
+
+    pos = np.full(n_inst, direction) * base
+    if direction > 0:
+        pos[longs] += tilt[longs]
+        pos[shorts] -= tilt[shorts]
+    else:
+        pos[longs] -= tilt[longs]
+        pos[shorts] += tilt[shorts]
+
+    return pos.tolist()
