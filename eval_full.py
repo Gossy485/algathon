@@ -34,6 +34,9 @@ def calcPL(prcHist: np.ndarray,
            numTestDays: int,
            noise_pct: float = 0.0,
            seed: int | None = None):
+    """
+    noise_pct > 0 only affects when explicitly passed; defaults to 0 for all other tests.
+    """
     rng = np.random.RandomState(seed) if noise_pct and seed is not None else None
     prc_exec = prcHist
     nInst, nt = prc_exec.shape
@@ -49,17 +52,19 @@ def calcPL(prcHist: np.ndarray,
         price_ex = prc_exec[:, t-1]
         hist_true = prc_exec[:, :t]
 
-        # simulate noisy fill price
+        # simulate noisy fill price only if noise_pct>0
         if noise_pct and rng is not None:
             noise = noise_pct * rng.randn(nInst)
             price_sig = price_ex * (1.0 + noise)
         else:
-            price_sig = price_ex.copy()
+            price_sig = price_ex
 
+        # build history passed to strategy
         hist_sig = hist_true.copy()
         hist_sig[:, -1] = price_sig
 
         if t < nt:
+            # decision based on potentially noisy last price
             tgt = np.asarray(main.getMyPosition(hist_sig), int)
             cap = np.floor(POS_LIMIT_USD / price_ex).astype(int)
             tgt = np.clip(tgt, -cap, cap)
@@ -70,6 +75,7 @@ def calcPL(prcHist: np.ndarray,
             cash -= price_ex.dot(delta) + COMM_RATE * traded.sum()
             curPos = tgt.copy()
 
+        # mark-to-market
         posValue = curPos.dot(price_ex)
         todayPL = cash + posValue - value
         value = cash + posValue
@@ -77,27 +83,31 @@ def calcPL(prcHist: np.ndarray,
         if t > start_day:
             dailyPL.append(todayPL)
 
-    pll   = np.array(dailyPL)
-    mu    = pll.mean()
+    pll = np.array(dailyPL)
+    mu = pll.mean()
     sigma = pll.std(ddof=0)
     sharpe = np.sqrt(249) * mu / sigma if sigma > 0 else 0.0
-    ret    = value / totDVolume if totDVolume > 0 else 0.0
+    ret = value / totDVolume if totDVolume > 0 else 0.0
     return mu, ret, sigma, sharpe, totDVolume, pll
 
 # ───────── evaluation functions ─────────
 def walkForward(prc):
+    """walkForward with zero noise"""
     _, nt = prc.shape
     scores = []
     start = 0
     while start + TRAIN_DAYS + TEST_DAYS <= nt:
         importlib.reload(main)
         block = prc[:, : start + TRAIN_DAYS + TEST_DAYS]
-        m, r, s, sh, dv, _ = calcPL(block, TEST_DAYS)
+        # explicitly no noise for CV folds
+        m, r, s, sh, dv, _ = calcPL(block, TEST_DAYS, noise_pct=0.0)
         scores.append(m - 0.1 * s)
         start += TEST_DAYS
     return np.array(scores)
 
+
 def shuffleTest(prc, repeats=20):
+    """shuffleTest with zero noise"""
     rng = np.random.default_rng(42)
     vals = []
     for _ in range(repeats):
@@ -105,27 +115,31 @@ def shuffleTest(prc, repeats=20):
         for i in range(sh.shape[0]):
             sh[i] = np.roll(sh[i], rng.integers(sh.shape[1]))
         importlib.reload(main)
+        # explicitly no noise for shuffle test
         vals.append(walkForward(sh).mean())
     return float(np.mean(vals))
 
 # ───────── main script ─────────
 if __name__ == "__main__":
-    prcAll   = loadPrices(PRICE_FILE)
+    prcAll = loadPrices(PRICE_FILE)
     prcTrain = prcAll[:, :USE_DAYS]
     print(f"Evaluating on first {USE_DAYS} days")
 
-    # 1) Walk-forward
+    # 1) Walk-forward (no noise)
     wf_scores = walkForward(prcTrain)
-    wts       = np.arange(1, len(wf_scores)+1)
-    tw_mean   = (wf_scores * wts).sum() / wts.sum()
+    wts = np.arange(1, len(wf_scores)+1)
+    tw_mean = (wf_scores * wts).sum() / wts.sum()
 
-    # 2) Shuffle
+    # 2) Shuffle (no noise)
     shuffle_mean = shuffleTest(prcTrain)
 
-    # 3) Noise test
+    # 3) Noise test (only here)
     importlib.reload(main)
     mu_n, ret_n, sigma_n, sharpe_n, dvol_n, pll_n = calcPL(
-        prcTrain, TEST_DAYS, noise_pct=NOISE_PCT, seed=RANDOM_SEED
+        prcTrain,
+        TEST_DAYS,
+        noise_pct=NOISE_PCT,
+        seed=RANDOM_SEED
     )
     score_n = mu_n - 0.1 * sigma_n
 
