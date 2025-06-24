@@ -4,8 +4,9 @@ import numpy as np
 
 LOOKBACK = 10
 THRESH = 0.002
-INDEX_DOLLARS = 800
-CS_DOLLARS = 400
+INDEX_DOLLARS = 744
+CS_DOLLARS = 30
+CROSS_COUNT = 1
 
 
 def getMyPosition(price_history: np.ndarray) -> list[int]:
@@ -24,8 +25,8 @@ def getMyPosition(price_history: np.ndarray) -> list[int]:
     direction = 1 if mom > 0 else -1
     inst_mom = prices[:, -1] / prices[:, -LOOKBACK - 1] - 1.0
     ranks = np.argsort(inst_mom)
-    longs = ranks[-10:]
-    shorts = ranks[:10]
+    longs = ranks[-CROSS_COUNT:]
+    shorts = ranks[:CROSS_COUNT]
 
     price_today = prices[:, -1]
     base = np.floor(INDEX_DOLLARS / price_today).astype(int)
