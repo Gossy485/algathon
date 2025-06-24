@@ -1,68 +1,65 @@
 #!/usr/bin/env python
-
-"""Mean reversion strategy using z-score of price relative to a moving average.
-The function getMyPosition is called every day with the price history. We trade
-only when we have at least MA_WINDOW days of data and at most once every
-REBALANCE_DAYS. Position sizes are scaled inversely with historical volatility
-and capped by dollar limits.
-"""
-
+"""Index momentum with cross-sectional tilt."""
 import numpy as np
 
-# Strategy parameters
-MA_WINDOW = 20          # lookback for mean and volatility
-REBALANCE_DAYS = 5      # how often to rebalance
-Z_THRESHOLD = 2.0       # enter trades when |z| > threshold
-RISK_DOLLARS = 300      # risk budget per leg
-MAX_LEG_DOLLARS = 10000
+LOOKBACK = 10
+THRESH = 0.0015
+INDEX_DOLLARS = 1200
+CS_DOLLARS = 60
+CROSS_COUNT = 1
+HOLD_DAYS = 10
 
-# Internal state
-_last_rebalance = 0
-_positions: np.ndarray | None = None
+_last_dir = 0
+_last_pos: np.ndarray | None = None
+_last_day = -1
 
 
-def getMyPosition(price_history: np.ndarray):
-    """Return target positions for each instrument."""
-    global _last_rebalance, _positions
+def getMyPosition(price_history: np.ndarray) -> list[int]:
+    global _last_dir, _last_pos, _last_day
 
     prices = np.asarray(price_history, dtype=float)
     if prices.shape[0] != 50:
         prices = prices.T
+    n, t = prices.shape
+    today = t - 1
 
-    n_inst, n_days = prices.shape
-    today = n_days - 1
+    if _last_pos is None:
+        _last_pos = np.zeros(n, dtype=int)
 
-    if _positions is None:
-        _positions = np.zeros(n_inst, dtype=int)
+    if t <= LOOKBACK:
+        return _last_pos.tolist()
 
-    # insufficient history
-    if n_days <= MA_WINDOW:
-        return _positions.tolist()
+    index = prices.mean(axis=0)
+    mom = index[-1] / index[-LOOKBACK - 1] - 1
+    direction = 0
+    if abs(mom) >= THRESH:
+        direction = 1 if mom > 0 else -1
 
-    # only rebalance every REBALANCE_DAYS
-    if today - _last_rebalance < REBALANCE_DAYS:
-        return _positions.tolist()
+    if today - _last_day < HOLD_DAYS and direction == _last_dir:
+        return _last_pos.tolist()
 
-    window = prices[:, today - MA_WINDOW + 1 : today + 1]
-    ma = window.mean(axis=1)
-    vol = window.std(axis=1)
-    # avoid zero volatility
-    fallback = np.median(vol[vol > 0])
-    vol[vol == 0] = fallback if fallback > 0 else 1.0
+    if direction == 0:
+        _last_pos = np.zeros(n, dtype=int)
+        _last_dir = 0
+        _last_day = today
+        return _last_pos.tolist()
 
-    z = (prices[:, today] - ma) / vol
+    inst_mom = prices[:, -1] / prices[:, -LOOKBACK - 1] - 1
+    ranks = np.argsort(inst_mom)
+    longs = ranks[-CROSS_COUNT:]
+    shorts = ranks[:CROSS_COUNT]
+    price_today = prices[:, -1]
+    base = np.floor(INDEX_DOLLARS / price_today).astype(int)
+    tilt = np.floor(CS_DOLLARS / price_today).astype(int)
+    pos = np.full(n, direction) * base
+    if direction > 0:
+        pos[longs] += tilt[longs]
+        pos[shorts] -= tilt[shorts]
+    else:
+        pos[longs] -= tilt[longs]
+        pos[shorts] += tilt[shorts]
 
-    new_pos = np.zeros(n_inst, dtype=int)
-    for i in range(n_inst):
-        if z[i] < -Z_THRESHOLD:
-            size = int(RISK_DOLLARS / (vol[i] * prices[i, today]))
-            size = max(1, min(size, int(MAX_LEG_DOLLARS / prices[i, today])))
-            new_pos[i] = size
-        elif z[i] > Z_THRESHOLD:
-            size = int(RISK_DOLLARS / (vol[i] * prices[i, today]))
-            size = max(1, min(size, int(MAX_LEG_DOLLARS / prices[i, today])))
-            new_pos[i] = -size
-
-    _positions = new_pos
-    _last_rebalance = today
-    return new_pos.tolist()
+    _last_pos = pos.astype(int)
+    _last_dir = direction
+    _last_day = today
+    return _last_pos.tolist()
