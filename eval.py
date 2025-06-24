@@ -7,7 +7,7 @@ from main import getMyPosition
 
 # ─── User parameters ────────────────────────────────────────────────
 prices_file      = "prices.txt"
-test_days        = 50       # only score the last 50 days
+test_days        = 750       # only score the last 50 days
 comm_rate        = 0.0005
 dollar_pos_limit = 10000.0
 

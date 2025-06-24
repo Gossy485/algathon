@@ -127,8 +127,11 @@ if __name__ == "__main__":
 
     # 1) Walk-forward (no noise)
     wf_scores = walkForward(prcTrain)
-    wts = np.arange(1, len(wf_scores)+1)
-    tw_mean = (wf_scores * wts).sum() / wts.sum()
+    #wts = np.arange(1, len(wf_scores)+1)
+    #tw_mean = wf_scores.mean()#(wf_scores * wts).sum() / wts.sum()
+    λ = 0.1
+    exps = np.exp(λ * np.arange(len(wf_scores))) 
+    tw_mean = (wf_scores * exps).sum() / exps.sum()
 
     # 2) Shuffle (no noise)
     shuffle_mean = shuffleTest(prcTrain)
