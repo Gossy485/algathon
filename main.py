@@ -3,11 +3,12 @@
 import numpy as np
 
 LOOKBACK = 10
-THRESH = 0.0015
-INDEX_DOLLARS = 1200
-CS_DOLLARS = 60
+THRESH = 0.001
+INDEX_DOLLARS = 2000
+CS_DOLLARS = 40
 CROSS_COUNT = 1
-HOLD_DAYS = 10
+HOLD_DAYS = 20
+SCALE = 0.005  # scale factor for momentum strength
 
 _last_dir = 0
 _last_pos: np.ndarray | None = None
@@ -31,8 +32,12 @@ def getMyPosition(price_history: np.ndarray) -> list[int]:
 
     index = prices.mean(axis=0)
     mom = index[-1] / index[-LOOKBACK - 1] - 1
+    if abs(mom) <= THRESH:
+        strength = 0.0
+    else:
+        strength = min(1.0, (abs(mom) - THRESH) / SCALE)
     direction = 0
-    if abs(mom) >= THRESH:
+    if strength > 0:
         direction = 1 if mom > 0 else -1
 
     if today - _last_day < HOLD_DAYS and direction == _last_dir:
@@ -51,13 +56,13 @@ def getMyPosition(price_history: np.ndarray) -> list[int]:
     price_today = prices[:, -1]
     base = np.floor(INDEX_DOLLARS / price_today).astype(int)
     tilt = np.floor(CS_DOLLARS / price_today).astype(int)
-    pos = np.full(n, direction) * base
+    pos = np.full(n, direction) * (base * strength).astype(int)
     if direction > 0:
-        pos[longs] += tilt[longs]
-        pos[shorts] -= tilt[shorts]
+        pos[longs] += (tilt * strength).astype(int)[longs]
+        pos[shorts] -= (tilt * strength).astype(int)[shorts]
     else:
-        pos[longs] -= tilt[longs]
-        pos[shorts] += tilt[shorts]
+        pos[longs] -= (tilt * strength).astype(int)[longs]
+        pos[shorts] += (tilt * strength).astype(int)[shorts]
 
     _last_pos = pos.astype(int)
     _last_dir = direction
