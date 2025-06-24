@@ -12,7 +12,7 @@ COMM_RATE     = 0.0005    # commission rate (5 bps)
 POS_LIMIT_USD = 10000
 TRAIN_DAYS    = 250
 TEST_DAYS     = 50
-NOISE_PCT     = 0.1       # ±0.5% daily-return noise
+NOISE_PCT     = 2       # ±2% daily-return noise
 
 # ───────── data loader ─────────
 def loadPrices(fn):
@@ -100,22 +100,11 @@ if __name__ == "__main__":
     # 3) Shuffle
     shuffle_mean = shuffleTest(prcAll)
 
-    # 4) Full run
-    fm, fs, fd, _ = calcPL(prcAll, prcAll.shape[1])
-    full_score = fm - 0.1 * fs
-
     # ───────── summary display ─────────
     print("========== Evaluation Summary ==========")
     print(f"Walk-forward folds : {wf_scores.round(1)}")
     print(f"Time-weighted mean : {tw_mean:.2f}\n")
-
     print("---- Robustness Tests ----")
     print(f"Noise test (±{NOISE_PCT}%)   : {noise_mean:+.2f}")
-    print(f"Shuffle test         : {shuffle_mean:+.2f}\n")
-
-    print("---- Full-series Stats ----")
-    print(f"mean(PL)   : {fm:8.1f}")
-    print(f"StdDev(PL) : {fs:8.2f}")
-    print(f"Total DVol : {fd:8.0f}")
-    print(f"Score      : {full_score:8.2f}")
+    print(f"Shuffle test         : {shuffle_mean:+.2f}")
     print("========================================\n")
