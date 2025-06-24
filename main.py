@@ -1,91 +1,106 @@
-# ─────────────── main.py ───────────────
+#!/usr/bin/env python
 
-from __future__ import annotations
 import numpy as np
 
-# ── strategy knobs ────────────────────────────
-_WINDOW_SMA      = 13          # look-back for mean-reversion signal
-_REBAL_EVERY     = 5           # rebalance cadence (days)
-_K_LONG_SHORT    = 6           # number of longs and shorts
-_GAP_THRESH      = 0.018       # 1.8 % from SMA before we act
-_VOL_WIN         = 20          # σ horizon for risk sizing
-_SIGMA_RISK_USD  = 2_000.0     # \$ P&L budget at ±1 σ
-_LEG_CAP_USD     = 9_900.0     # ≤ \$10 000 per competition rules
-# ──────────────────────────────────────────────
+# Strategy settings
+WINDOW_SMA = 13      # how many days to look back for the average
+REBALANCE_DAYS = 5   # how often to rebalance
+NUM_TRADES = 6       # number of long and short trades
+GAP_THRESHOLD = 0.018
+VOLATILITY_WINDOW = 20
+RISK_DOLLARS = 1000  # risk budget per name
+MAX_LEG_DOLLARS = 10000
 
-_last_reb_day: int | float = -10**9
-_pos:           np.ndarray | None = None
-
-
-def _as_matrix(p: np.ndarray) -> np.ndarray:
-    """Ensure the data are (50 × nDays), transposing if needed."""
-    return p if p.shape[0] == 50 else p.T
+# Keep track of last rebalance day and positions
+last_rebalance = 0
+positions = None
 
 
-def getMyPosition(prcSoFar) -> list[int]:
-    """
-    Parameters
-    ----------
-    prcSoFar : np.ndarray
-        Price history *up to today* inclusive.  Shape (50 × nDays) or its
-        transpose.
+def getMyPosition(price_history):
+    global last_rebalance, positions
+    
+    # Convert to numpy array
+    prices = np.array(price_history, dtype=float)
+    # Make sure prices has shape (50, days)
+    if prices.shape[0] != 50:
+        prices = prices.T
 
-    Returns
-    -------
-    list[int] – desired share positions for all 50 instruments.
-    """
-    global _last_reb_day, _pos
+    num_instruments, num_days = prices.shape
+    today = num_days - 1
 
-    prc = _as_matrix(np.asarray(prcSoFar, dtype=float))
-    n_inst, n_days = prc.shape
-    today          = n_days - 1
+    # Initialize positions on first call
+    if positions is None:
+        positions = [0] * num_instruments
 
-    # one-off initialisation
-    if _pos is None:
-        _pos = np.zeros(n_inst, dtype=int)
+    # Not enough data or not time to rebalance yet
+    if num_days <= max(WINDOW_SMA, VOLATILITY_WINDOW):
+        return positions
+    if today - last_rebalance < REBALANCE_DAYS:
+        return positions
 
-    # need enough history for both SMA and σ
-    if n_days <= max(_WINDOW_SMA, _VOL_WIN):
-        return _pos.tolist()
+    # Compute simple moving average for each instrument
+    sma = []
+    for i in range(num_instruments):
+        window = prices[i, today - WINDOW_SMA + 1 : today + 1]
+        sma.append(sum(window) / len(window))
 
-    # honour the rebalance cadence
-    if (today - _last_reb_day) < _REBAL_EVERY:
-        return _pos.tolist()
+    # Compute gap from current price to SMA
+    gaps = []
+    for i in range(num_instruments):
+        gap = prices[i, today] / sma[i] - 1.0
+        gaps.append(gap)
 
-    # ── build the mean-reversion signal ───────────────────────────────
-    sma  = prc[:, today - _WINDOW_SMA + 1 : today + 1].mean(axis=1)
-    gap  = prc[:, today] / sma - 1.0
+    # Rank instruments by gap
+    sorted_indices = sorted(range(num_instruments), key=lambda i: gaps[i])
 
-    order   = np.argsort(gap)
-    longs   = [i for i in order[:_K_LONG_SHORT]  if gap[i] <= -_GAP_THRESH]
-    shorts  = [i for i in order[-_K_LONG_SHORT:] if gap[i] >=  _GAP_THRESH]
+    longs = []
+    for i in sorted_indices[:NUM_TRADES]:
+        if gaps[i] <= -GAP_THRESHOLD:
+            longs.append(i)
 
-    new_pos = np.zeros(n_inst, dtype=int)
+    shorts = []
+    for i in sorted_indices[-NUM_TRADES:]:
+        if gaps[i] >= GAP_THRESHOLD:
+            shorts.append(i)
 
-    # proceed only if we have names on *both* sides (keeps book neutral)
+    # Prepare new positions
+    new_positions = [0] * num_instruments
+
+    # Only trade if we have both longs and shorts
     if longs and shorts:
-        # 20-day realised σ for risk-parity sizing
-        ret20 = prc[:, today - _VOL_WIN + 1 : today + 1] \
-                / prc[:, today - _VOL_WIN : today] - 1.0
-        sigma = ret20.std(axis=1, ddof=0)
-        # guard against zero-vol names
-        fallback = np.median(sigma[sigma > 0])
-        sigma    = np.where(sigma == 0, fallback, sigma)
+        # Calculate daily returns over the volatility window
+        returns = []
+        for i in range(num_instruments):
+            ret = []
+            for d in range(today - VOLATILITY_WINDOW + 1, today + 1):
+                ret.append(prices[i, d] / prices[i, d-1] - 1)
+            returns.append(ret)
 
-        prices = prc[:, today]
+        # Compute standard deviation for each instrument
+        volatility = []
+        for ret in returns:
+            volatility.append(np.std(ret))
 
+        # Replace any zero volatility with the median of non-zero volatilities
+        non_zero_vol = [v for v in volatility if v > 0]
+        fallback = np.median(non_zero_vol)
+        for i in range(len(volatility)):
+            if volatility[i] == 0:
+                volatility[i] = fallback
+
+        # Determine position sizes
         for i in longs:
-            sh = int(_SIGMA_RISK_USD / (sigma[i] * prices[i]))
-            sh = max(1, min(sh, int(_LEG_CAP_USD / prices[i])))
-            new_pos[i] =  sh
+            size = int(RISK_DOLLARS / (volatility[i] * prices[i, today]))
+            size = max(1, min(size, int(MAX_LEG_DOLLARS / prices[i, today])))
+            new_positions[i] = size
 
         for i in shorts:
-            sh = int(_SIGMA_RISK_USD / (sigma[i] * prices[i]))
-            sh = max(1, min(sh, int(_LEG_CAP_USD / prices[i])))
-            new_pos[i] = -sh
+            size = int(RISK_DOLLARS / (volatility[i] * prices[i, today]))
+            size = max(1, min(size, int(MAX_LEG_DOLLARS / prices[i, today])))
+            new_positions[i] = -size
 
-    # persist state & return
-    _pos           = new_pos
-    _last_reb_day  = today
-    return new_pos.tolist()
+    # Save the new state
+    positions = new_positions
+    last_rebalance = today
 
+    return new_positions
