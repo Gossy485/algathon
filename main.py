@@ -5,7 +5,7 @@ import numpy as np
 
 LOOKBACK      = 10
 THRESH        = 0.002
-TARGET_DOLLAR = 1000
+TARGET_DOLLAR = 1500
 VOL_WINDOW    = LOOKBACK  # you could also use a longer vol window
 
 
